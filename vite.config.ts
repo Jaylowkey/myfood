@@ -3,7 +3,17 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 
-import siteConfiguration from './.figma/make/site.json'
+const siteConfiguration = {
+  title: 'MyFood — Delivery',
+  description: 'Plataforma de pedidos e delivery da MyFood.',
+  language: 'pt',
+  robots: { index: true },
+  icons: {},
+  openGraph: {},
+  analytics: {},
+  customScripts: {},
+  accessibility: { addBypassLinks: true },
+}
 
 
 // Vite config — https://vitejs.dev/config/
