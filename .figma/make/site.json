@@ -1,0 +1,15 @@
+{
+  "title": "MyFood — Delivery",
+  "description": "Plataforma de pedidos e delivery da MyFood.",
+  "language": "pt",
+  "robots": {
+    "index": true
+  },
+  "icons": {},
+  "openGraph": {},
+  "analytics": {},
+  "customScripts": {},
+  "accessibility": {
+    "addBypassLinks": true
+  }
+}
