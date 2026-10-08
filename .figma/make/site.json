@@ -1,15 +1,10 @@
 {
-  "title": "MyFood — Delivery",
-  "description": "Plataforma de pedidos e delivery da MyFood.",
-  "language": "pt",
+  "description": "Streamline your snack shop's delivery and order management with a user-friendly platform for customers, admins, and delivery drivers.",
   "robots": {
-    "index": true
+    "index": false
   },
-  "icons": {},
-  "openGraph": {},
-  "analytics": {},
-  "customScripts": {},
   "accessibility": {
-    "addBypassLinks": true
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
   }
 }
