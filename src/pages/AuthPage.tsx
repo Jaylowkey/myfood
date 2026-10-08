@@ -68,7 +68,10 @@ export default function AuthPage({ mode }: { mode: Mode }) {
         const { data, error: authError } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { name: name.trim(), phone: phone.trim() } },
+          options: {
+            data: { name: name.trim(), phone: phone.trim() },
+            emailRedirectTo: `${window.location.origin}/confirmar-email`,
+          },
         });
         if (authError) throw authError;
         if (data.session) navigate("/conta", { replace: true });
