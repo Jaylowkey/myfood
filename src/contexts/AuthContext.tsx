@@ -15,7 +15,7 @@ export type Profile = {
   email: string;
   name: string;
   phone: string;
-  role: "customer" | "admin" | "super_admin";
+  role: "customer" | "driver" | "admin" | "super_admin";
   marketingOptIn: boolean;
   createdAt: string;
 };
@@ -25,6 +25,7 @@ type AuthContextValue = {
   profile: Profile | null;
   loading: boolean;
   isAdmin: boolean;
+  isDriver: boolean;
   refreshProfile: () => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -101,6 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profile,
       loading,
       isAdmin: profile?.role === "admin" || profile?.role === "super_admin",
+      isDriver: profile?.role === "driver",
       refreshProfile,
       signOut: async () => {
         await supabase.auth.signOut();
