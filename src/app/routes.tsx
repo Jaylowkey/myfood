@@ -3,6 +3,7 @@ import ProtectedRoute from "../components/ProtectedRoute";
 import AccountPage from "../pages/AccountPage";
 import AdminPage from "../pages/AdminPage";
 import AuthPage from "../pages/AuthPage";
+import DriverPage from "../pages/DriverPage";
 import Storefront from "../pages/Storefront";
 import ConfirmEmailPage from "../pages/ConfirmEmailPage";
 
@@ -20,6 +21,10 @@ export const router = createBrowserRouter([
   {
     path: "/admin",
     element: <ProtectedRoute admin><AdminPage /></ProtectedRoute>,
+  },
+  {
+    path: "/driver",
+    element: <ProtectedRoute driver><DriverPage /></ProtectedRoute>,
   },
   { path: "*", element: <AuthPage mode="login" /> },
 ]);
