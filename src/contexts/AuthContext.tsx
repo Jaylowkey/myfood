@@ -53,7 +53,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           await refreshProfile();
         } catch {
-          await supabase.auth.signOut();
+          // Keep the valid auth session even if the profile API is temporarily unavailable.
+          // Signing out here breaks email-confirmation and password-recovery callbacks.
+          setProfile(null);
         }
       }
       setLoading(false);
