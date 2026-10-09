@@ -20,6 +20,7 @@ const tabs: Array<[Tab, string]> = [
 const statusLabels: Record<string, string> = {
   received: "Recebido",
   preparing: "Em preparação",
+  ready: "Pronto para recolha",
   delivery: "Em entrega",
   completed: "Concluído",
   cancelled: "Cancelado",
@@ -157,7 +158,7 @@ export default function AdminPage() {
             {tab === "users" && (
               <section className="mt-8 overflow-hidden rounded-[24px] border border-[#e2d8cb] bg-white">
                 <div className="border-b border-[#eadfce] p-6"><h2 className="font-display text-xl font-black">Utilizadores e permissões</h2><p className="mt-1 text-sm text-[#796b60]">Apenas super administradores podem promover administradores.</p></div>
-                <div className="divide-y divide-[#eadfce]">{users.map((user) => <div className="flex flex-wrap items-center justify-between gap-4 p-5" key={user.id}><div><div className="font-black">{user.name}</div><div className="text-sm text-[#796b60]">{user.email}</div></div><div className="flex items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${user.marketingOptIn ? "bg-[#edf8ed] text-[#286b2d]" : "bg-[#f2e9db] text-[#796b60]"}`}>{user.marketingOptIn ? "Marketing ativo" : "Sem marketing"}</span>{profile?.role === "super_admin" && user.role !== "super_admin" ? <select className="rounded-xl border border-[#e5d7c5] px-3 py-2 text-sm font-bold" onChange={(event) => void updateRole(user.id, event.target.value)} value={user.role}><option value="customer">Cliente</option><option value="admin">Admin</option></select> : <span className="rounded-full bg-[#241712] px-3 py-1.5 text-xs font-black text-white">{user.role}</span>}</div></div>)}</div>
+                <div className="divide-y divide-[#eadfce]">{users.map((user) => <div className="flex flex-wrap items-center justify-between gap-4 p-5" key={user.id}><div><div className="font-black">{user.name}</div><div className="text-sm text-[#796b60]">{user.email}</div></div><div className="flex items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${user.marketingOptIn ? "bg-[#edf8ed] text-[#286b2d]" : "bg-[#f2e9db] text-[#796b60]"}`}>{user.marketingOptIn ? "Marketing ativo" : "Sem marketing"}</span>{profile?.role === "super_admin" && user.role !== "super_admin" ? <select className="rounded-xl border border-[#e5d7c5] px-3 py-2 text-sm font-bold" onChange={(event) => void updateRole(user.id, event.target.value)} value={user.role}><option value="customer">Cliente</option><option value="driver">Entregador</option><option value="admin">Admin</option></select> : <span className="rounded-full bg-[#241712] px-3 py-1.5 text-xs font-black text-white">{user.role}</span>}</div></div>)}</div>
               </section>
             )}
           </>
