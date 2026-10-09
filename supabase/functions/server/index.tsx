@@ -18,7 +18,7 @@ const configuredAdminEmails = new Set(
     .filter(Boolean),
 );
 
-type Role = "customer" | "admin" | "super_admin";
+type Role = "customer" | "driver" | "admin" | "super_admin";
 
 type Profile = {
   id: string;
@@ -91,8 +91,8 @@ async function actor(c: any): Promise<Profile> {
     ? "super_admin"
     : configuredAdminEmails.has(email)
       ? "admin"
-      : existing?.role === "admin"
-        ? "admin"
+      : existing?.role === "admin" || existing?.role === "driver"
+        ? existing.role
         : "customer";
   const profile: Profile = {
     id: data.user.id,
@@ -207,6 +207,10 @@ app.post(`${route}/orders`, async (c) => {
       address: String(body.address || "").trim().slice(0, 240),
       notes: String(body.notes || "").trim().slice(0, 300),
       status: "received",
+      driverId: null,
+      driverName: null,
+      driverPhone: null,
+      deliveryStage: null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -290,7 +294,7 @@ app.put(`${route}/admin/orders/:id`, async (c) => {
     const order = await kv.get(`order:${id}`);
     if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
     const body = await c.req.json();
-    const statuses = ["received", "preparing", "delivery", "completed", "cancelled"];
+    const statuses = ["received", "preparing", "ready", "delivery", "completed", "cancelled"];
     if (!statuses.includes(body.status)) return c.json({ error: "Estado inválido." }, 400);
     const updated = { ...order, status: body.status, updatedAt: new Date().toISOString() };
     await kv.set(`order:${id}`, updated);
@@ -303,6 +307,20 @@ app.put(`${route}/admin/orders/:id`, async (c) => {
       read: false,
       createdAt: new Date().toISOString(),
     });
+    if (body.status === "ready" && !order.driverId) {
+      const drivers = (await kv.getByPrefix("profile:")).filter((item: any) => item.role === "driver");
+      await Promise.all(drivers.map((driver: any) => {
+        const driverNotificationId = crypto.randomUUID();
+        return kv.set(`notification:${driver.id}:${driverNotificationId}`, {
+          id: driverNotificationId,
+          title: "Nova entrega disponível",
+          message: `Pedido #${order.id.slice(0, 8).toUpperCase()} está pronto para recolha.`,
+          type: "delivery",
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      }));
+    }
     return c.json({ order: updated });
   } catch (error) {
     return failure(c, error);
@@ -325,8 +343,8 @@ app.get(`${route}/admin/users`, async (c) => {
         ? "super_admin"
         : configuredAdminEmails.has(email)
           ? "admin"
-          : existing?.role === "admin"
-            ? "admin"
+          : existing?.role === "admin" || existing?.role === "driver"
+            ? existing.role
             : "customer";
       return publicProfile({
         id: user.id,
@@ -348,11 +366,25 @@ app.put(`${route}/admin/users/:id/role`, async (c) => {
   try {
     const profile = await actor(c);
     requireSuperAdmin(profile);
-    const target = await kv.get(`profile:${c.req.param("id")}`);
-    if (!target) return c.json({ error: "Utilizador não encontrado." }, 404);
+    const targetId = c.req.param("id");
     const body = await c.req.json();
-    if (!["customer", "admin"].includes(body.role)) {
+    if (!["customer", "driver", "admin"].includes(body.role)) {
       return c.json({ error: "Função inválida." }, 400);
+    }
+    let target = await kv.get(`profile:${targetId}`);
+    if (!target) {
+      const authUser = (await allAuthUsers()).find((item: any) => item.id === targetId);
+      if (!authUser?.email) return c.json({ error: "Utilizador não encontrado." }, 404);
+      const email = String(authUser.email).toLowerCase();
+      target = {
+        id: authUser.id,
+        email,
+        name: authUser.user_metadata?.name || email.split("@")[0] || "Utilizador",
+        phone: authUser.user_metadata?.phone || "",
+        role: superAdminEmails.has(email) ? "super_admin" : "customer",
+        marketingOptIn: true,
+        createdAt: authUser.created_at,
+      };
     }
     if (superAdminEmails.has(String(target.email).toLowerCase())) {
       return c.json({ error: "Não é possível alterar um super administrador." }, 400);
@@ -422,6 +454,86 @@ app.post(`${route}/admin/campaigns`, async (c) => {
       );
     }
     return c.json({ campaign }, 201);
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+
+app.get(`${route}/driver/orders`, async (c) => {
+  try {
+    const profile = await actor(c);
+    if (!["driver", "admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
+    const orders = (await kv.getByPrefix("order:")).sort((a: any, b: any) =>
+      String(b.createdAt).localeCompare(String(a.createdAt)),
+    );
+    return c.json({
+      available: orders.filter((item: any) => item.status === "ready" && !item.driverId),
+      assigned: orders.filter((item: any) =>
+        ["admin", "super_admin"].includes(profile.role)
+          ? item.driverId && !["completed", "cancelled"].includes(item.status)
+          : item.driverId === profile.id && !["completed", "cancelled"].includes(item.status),
+      ),
+      completed: orders.filter((item: any) =>
+        item.status === "completed" && (["admin", "super_admin"].includes(profile.role) || item.driverId === profile.id),
+      ).slice(0, 30),
+    });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.post(`${route}/driver/orders/:id/claim`, async (c) => {
+  try {
+    const profile = await actor(c);
+    if (!["driver", "admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
+    const id = c.req.param("id");
+    const order = await kv.get(`order:${id}`);
+    if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
+    if (order.driverId && order.driverId !== profile.id) return c.json({ error: "Entrega já aceite." }, 409);
+    if (order.status !== "ready") return c.json({ error: "Pedido ainda não está pronto." }, 400);
+    const now = new Date().toISOString();
+    const updated = { ...order, driverId: profile.id, driverName: profile.name, driverPhone: profile.phone || "", deliveryStage: "accepted", assignedAt: now, updatedAt: now };
+    await kv.set(`order:${id}`, updated);
+    const notificationId = crypto.randomUUID();
+    await kv.set(`notification:${order.userId}:${notificationId}`, {
+      id: notificationId, title: "Entregador confirmado", message: `${profile.name} aceitou a sua entrega.`,
+      type: "delivery", read: false, createdAt: now,
+    });
+    return c.json({ order: updated });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.put(`${route}/driver/orders/:id/stage`, async (c) => {
+  try {
+    const profile = await actor(c);
+    if (!["driver", "admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
+    const id = c.req.param("id");
+    const order = await kv.get(`order:${id}`);
+    if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
+    if (profile.role === "driver" && order.driverId !== profile.id) throw new Error("FORBIDDEN");
+    const { stage } = await c.req.json();
+    const allowedStages = ["accepted", "picked_up", "arriving", "delivered"];
+    if (!allowedStages.includes(stage)) return c.json({ error: "Etapa inválida." }, 400);
+    if (stage !== "accepted" && !order.driverId) return c.json({ error: "Entrega sem entregador atribuído." }, 400);
+    const labels: Record<string, string> = {
+      accepted: "O entregador aceitou a entrega.",
+      picked_up: "O pedido foi recolhido e está a caminho.",
+      arriving: "O entregador está próximo do endereço.",
+      delivered: "Pedido entregue. Bom apetite!",
+    };
+    const status = stage === "delivered" ? "completed" : stage === "accepted" ? "ready" : "delivery";
+    const now = new Date().toISOString();
+    const updated = { ...order, deliveryStage: stage, status, updatedAt: now };
+    await kv.set(`order:${id}`, updated);
+    const notificationId = crypto.randomUUID();
+    await kv.set(`notification:${order.userId}:${notificationId}`, {
+      id: notificationId, title: "Atualização da entrega", message: labels[stage],
+      type: "delivery", read: false, createdAt: now,
+    });
+    return c.json({ order: updated });
   } catch (error) {
     return failure(c, error);
   }
