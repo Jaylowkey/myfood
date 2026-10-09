@@ -5,6 +5,8 @@ import { supabase } from "../lib/supabase";
 
 type Mode = "login" | "register" | "forgot" | "reset";
 
+const AUTH_REDIRECT_BASE = "https://www.myfood.website";
+
 const content: Record<Mode, { title: string; subtitle: string; button: string }> = {
   login: {
     title: "Bem-vindo de volta",
@@ -70,7 +72,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
           password,
           options: {
             data: { name: name.trim(), phone: phone.trim() },
-            emailRedirectTo: `${window.location.origin}/confirmar-email`,
+            emailRedirectTo: `${AUTH_REDIRECT_BASE}/confirmar-email`,
           },
         });
         if (authError) throw authError;
@@ -80,7 +82,7 @@ export default function AuthPage({ mode }: { mode: Mode }) {
 
       if (mode === "forgot") {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${AUTH_REDIRECT_BASE}/reset-password`,
         });
         if (authError) throw authError;
         setSuccess("Se existir uma conta com este e-mail, o link foi enviado.");
