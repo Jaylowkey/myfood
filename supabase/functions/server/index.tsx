@@ -36,6 +36,24 @@ const adminClient = () =>
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+async function allAuthUsers() {
+  const client = adminClient();
+  const users: any[] = [];
+  let page = 1;
+  const perPage = 1000;
+
+  while (true) {
+    const { data, error } = await client.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const batch = data.users || [];
+    users.push(...batch);
+    if (batch.length < perPage) break;
+    page += 1;
+  }
+
+  return users;
+}
+
 app.use("*", logger(console.log));
 app.use(
   "/*",
@@ -223,9 +241,9 @@ app.get(`${route}/admin/dashboard`, async (c) => {
   try {
     const profile = await actor(c);
     requireAdmin(profile);
-    const [orders, users, campaigns] = await Promise.all([
+    const [orders, authUsers, campaigns] = await Promise.all([
       kv.getByPrefix("order:"),
-      kv.getByPrefix("profile:"),
+      allAuthUsers(),
       kv.getByPrefix("campaign:"),
     ]);
     const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
@@ -235,7 +253,7 @@ app.get(`${route}/admin/dashboard`, async (c) => {
     return c.json({
       metrics: {
         orders: orders.length,
-        customers: users.length,
+        customers: authUsers.length,
         campaigns: campaigns.length,
         revenue,
         pending,
@@ -295,8 +313,32 @@ app.get(`${route}/admin/users`, async (c) => {
   try {
     const profile = await actor(c);
     requireAdmin(profile);
-    const users = await kv.getByPrefix("profile:");
-    return c.json({ users: users.map(publicProfile) });
+    const [authUsers, storedProfiles] = await Promise.all([
+      allAuthUsers(),
+      kv.getByPrefix("profile:"),
+    ]);
+    const profilesById = new Map(storedProfiles.map((item: any) => [item.id, item]));
+    const users = authUsers.map((user: any) => {
+      const email = String(user.email || "").toLowerCase();
+      const existing: any = profilesById.get(user.id);
+      const role: Role = superAdminEmails.has(email)
+        ? "super_admin"
+        : configuredAdminEmails.has(email)
+          ? "admin"
+          : existing?.role === "admin"
+            ? "admin"
+            : "customer";
+      return publicProfile({
+        id: user.id,
+        email,
+        name: existing?.name || user.user_metadata?.name || email.split("@")[0] || "Utilizador",
+        phone: existing?.phone || user.user_metadata?.phone || "",
+        role,
+        marketingOptIn: existing?.marketingOptIn ?? true,
+        createdAt: existing?.createdAt || user.created_at,
+      });
+    });
+    return c.json({ users });
   } catch (error) {
     return failure(c, error);
   }
