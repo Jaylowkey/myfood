@@ -5,7 +5,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import * as kv from "./kv_store.tsx";
 
 const app = new Hono();
-const route = "";
+const route = "/make-server-1c85eca0";
 const superAdminEmails = new Set([
   "jrsamadh@gmail.com",
   "paygoprimeira@gmail.com",
