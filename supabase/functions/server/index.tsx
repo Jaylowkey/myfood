@@ -252,7 +252,7 @@ app.get(`${route}/admin/dashboard`, async (c) => {
     ]);
     const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const pending = orders.filter((order) =>
-      ["received", "preparing", "delivery"].includes(order.status),
+      ["received", "preparing", "ready", "delivery"].includes(order.status),
     ).length;
     return c.json({
       metrics: {
