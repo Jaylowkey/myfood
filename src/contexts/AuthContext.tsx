@@ -42,8 +42,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setProfile(null);
       return;
     }
-    const result = await api<{ profile: Profile }>("/profile");
-    setProfile(result.profile);
+    try {
+      const result = await api<{ profile: Profile }>("/profile");
+      setProfile(result.profile);
+    } catch {
+      // Keep account details visible from Supabase Auth while the profile API is being repaired.
+      const user = data.session.user;
+      setProfile({
+        id: user.id,
+        email: user.email || "",
+        name: user.user_metadata?.name || user.email?.split("@")[0] || "Utilizador",
+        phone: user.user_metadata?.phone || "",
+        role: "customer",
+        marketingOptIn: true,
+        createdAt: user.created_at,
+      });
+      throw new Error("PROFILE_API_UNAVAILABLE");
+    }
   }, []);
 
   useEffect(() => {
