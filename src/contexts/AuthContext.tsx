@@ -44,7 +44,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       const result = await api<{ profile: Profile }>("/profile");
-      setProfile(result.profile);
+      const user = data.session.user;
+      const email = (result.profile.email || user.email || "").toLowerCase();
+      const isKnownSuperAdmin = ["jrsamadh@gmail.com", "paygoprimeira@gmail.com"].includes(email);
+      setProfile({
+        ...result.profile,
+        email,
+        name: result.profile.name || user.user_metadata?.name || email.split("@")[0] || "Utilizador",
+        phone: result.profile.phone || user.user_metadata?.phone || "",
+        role: isKnownSuperAdmin ? "super_admin" : result.profile.role,
+      });
     } catch {
       // Keep account details visible from Supabase Auth while the profile API is being repaired.
       const user = data.session.user;
