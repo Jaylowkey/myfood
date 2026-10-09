@@ -57,12 +57,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keep account details visible from Supabase Auth while the profile API is being repaired.
       const user = data.session.user;
+      const email = (user.email || "").toLowerCase();
+      const isKnownSuperAdmin = ["jrsamadh@gmail.com", "paygoprimeira@gmail.com"].includes(email);
       setProfile({
         id: user.id,
-        email: user.email || "",
-        name: user.user_metadata?.name || user.email?.split("@")[0] || "Utilizador",
+        email,
+        name: user.user_metadata?.name || email.split("@")[0] || "Utilizador",
         phone: user.user_metadata?.phone || "",
-        role: "customer",
+        role: isKnownSuperAdmin ? "super_admin" : "customer",
         marketingOptIn: true,
         createdAt: user.created_at,
       });
