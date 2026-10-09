@@ -4,11 +4,13 @@ import { useAuth } from "../contexts/AuthContext";
 export default function ProtectedRoute({
   children,
   admin = false,
+  driver = false,
 }: {
   children: React.ReactNode;
   admin?: boolean;
+  driver?: boolean;
 }) {
-  const { session, loading, isAdmin } = useAuth();
+  const { session, loading, isAdmin, isDriver } = useAuth();
   const location = useLocation();
 
   if (loading) {
