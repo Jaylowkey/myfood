@@ -200,6 +200,7 @@ app.post(`${route}/orders`, async (c) => {
       userId: profile.id,
       customerName: profile.name,
       customerEmail: profile.email,
+      customerPhone: profile.phone || "",
       items: body.items,
       subtotal: Number(body.subtotal) || 0,
       delivery: Number(body.delivery) || 0,
