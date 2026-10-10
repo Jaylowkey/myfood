@@ -4,16 +4,18 @@ import AppLogo from "../components/AppLogo";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 
-type Tab = "overview" | "orders" | "deliveries" | "marketing" | "users";
+type Tab = "overview" | "orders" | "deliveries" | "products" | "marketing" | "users";
 type Metrics = { orders: number; customers: number; campaigns: number; revenue: number; pending: number };
 type Order = { id: string; userId?: string; customerName: string; customerEmail: string; customerPhone?: string; address?: string; delivery?: number; total: number; status: string; driverId?: string; driverName?: string; createdAt: string };
 type User = { id: string; name: string; email: string; role: string; marketingOptIn: boolean };
 type Campaign = { id: string; title: string; message: string; status: string; audience: string; createdAt: string };
+type Product = { id: string; name: string; description: string; category: string; imageUrl: string; price: number; active: boolean; createdAt: string };
 
 const tabs: Array<[Tab, string]> = [
   ["overview", "Visão geral"],
   ["orders", "Pedidos"],
   ["deliveries", "Entregas"],
+  ["products", "Produtos"],
   ["marketing", "Marketing"],
   ["users", "Utilizadores"],
 ];
@@ -35,6 +37,10 @@ export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [deliveryBusy, setDeliveryBusy] = useState<string>("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [editingProduct, setEditingProduct] = useState<string | null>(null);
+  const [productForm, setProductForm] = useState({ name: "", description: "", category: "Geral", imageUrl: "", price: "" });
+  const [productBusy, setProductBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [campaign, setCampaign] = useState({ title: "", message: "", audience: "marketing" });
@@ -43,16 +49,18 @@ export default function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      const [dashboard, orderData, userData, campaignData] = await Promise.all([
+      const [dashboard, orderData, userData, campaignData, productData] = await Promise.all([
         api<{ metrics: Metrics; recentOrders: Order[] }>("/admin/dashboard"),
         api<{ orders: Order[] }>("/admin/orders"),
         api<{ users: User[] }>("/admin/users"),
         api<{ campaigns: Campaign[] }>("/admin/campaigns"),
+        api<{ products: Product[] }>("/admin/products"),
       ]);
       setMetrics(dashboard.metrics);
       setOrders(orderData.orders);
       setUsers(userData.users);
       setCampaigns(campaignData.campaigns);
+      setProducts(productData.products);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Não foi possível carregar o painel.");
     } finally {
@@ -65,6 +73,34 @@ export default function AdminPage() {
   async function updateOrder(id: string, status: string) {
     await api(`/admin/orders/${id}`, { method: "PUT", body: JSON.stringify({ status }) });
     setOrders((current) => current.map((order) => order.id === id ? { ...order, status } : order));
+  }
+
+  function resetProductForm() { setEditingProduct(null); setProductForm({ name: "", description: "", category: "Geral", imageUrl: "", price: "" }); }
+
+  async function saveProduct() {
+    setError("");
+    if (!productForm.name.trim() || !productForm.price || Number(productForm.price) <= 0) { setError("Preencha o nome e um preço válido para o produto."); return; }
+    setProductBusy(true);
+    try {
+      const payload = { ...productForm, price: Number(productForm.price), active: true };
+      const result = await api<{ product: Product }>(editingProduct ? `/admin/products/${editingProduct}` : "/admin/products", { method: editingProduct ? "PUT" : "POST", body: JSON.stringify(payload) });
+      setProducts((current) => editingProduct ? current.map((item) => item.id === editingProduct ? result.product : item) : [result.product, ...current]);
+      resetProductForm();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Não foi possível guardar o produto."); }
+    finally { setProductBusy(false); }
+  }
+
+  async function toggleProduct(product: Product) {
+    try {
+      const result = await api<{ product: Product }>(`/admin/products/${product.id}`, { method: "PUT", body: JSON.stringify({ ...product, active: !product.active }) });
+      setProducts((current) => current.map((item) => item.id === product.id ? result.product : item));
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "Não foi possível atualizar o produto."); }
+  }
+
+  async function deleteProduct(product: Product) {
+    if (!window.confirm(`Eliminar o produto “${product.name}”?`)) return;
+    try { await api(`/admin/products/${product.id}`, { method: "DELETE" }); setProducts((current) => current.filter((item) => item.id !== product.id)); if (editingProduct === product.id) resetProductForm(); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "Não foi possível eliminar o produto."); }
   }
 
   async function createCampaign(sendNow: boolean) {
@@ -178,6 +214,33 @@ export default function AdminPage() {
                   {!users.some((user) => user.role === "driver") && <div className="rounded-xl bg-[#fff0ee] p-3 text-sm text-[#b6201a]">Ainda não existem utilizadores com a função Entregador. Na secção Utilizadores, atribua essa função a uma conta.</div>}
                 </div>
               </section>
+            )}
+            {tab === "products" && (
+              <div className="mt-8 grid items-start gap-6 xl:grid-cols-[minmax(300px,.8fr)_minmax(0,1.2fr)]">
+                <section className="rounded-[24px] bg-[#241712] p-6 text-white">
+                  <div className="text-xs font-black uppercase tracking-[0.15em] text-[#f6bf26]">{editingProduct ? "Editar produto" : "Novo produto"}</div>
+                  <h2 className="font-display mt-2 text-2xl font-black">{editingProduct ? "Atualizar catálogo" : "Adicionar à loja"}</h2>
+                  <p className="mt-2 text-sm text-white/60">Os produtos criados aqui ficam guardados no catálogo da MyFood.</p>
+                  <label className="mt-5 block text-sm font-bold">Nome do produto<input required maxLength={120} className="mt-2 w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 outline-none focus:border-[#f6bf26]" value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Ex.: Frango grelhado" /></label>
+                  <label className="mt-4 block text-sm font-bold">Descrição<textarea maxLength={1000} className="mt-2 min-h-24 w-full resize-y rounded-xl border border-white/15 bg-white/10 px-4 py-3 outline-none focus:border-[#f6bf26]" value={productForm.description} onChange={(event) => setProductForm({ ...productForm, description: event.target.value })} placeholder="Ingredientes ou detalhes do produto" /></label>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <label className="block text-sm font-bold">Preço (MT)<input required type="number" min="1" step="0.01" className="mt-2 w-full rounded-xl border border-white/15 bg-white/10 px-3 py-3 outline-none focus:border-[#f6bf26]" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="250" /></label>
+                    <label className="block text-sm font-bold">Categoria<input maxLength={80} className="mt-2 w-full rounded-xl border border-white/15 bg-white/10 px-3 py-3 outline-none focus:border-[#f6bf26]" value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })} placeholder="Refeições" /></label>
+                  </div>
+                  <label className="mt-4 block text-sm font-bold">URL da fotografia (HTTPS)<input type="url" className="mt-2 w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 outline-none focus:border-[#f6bf26]" value={productForm.imageUrl} onChange={(event) => setProductForm({ ...productForm, imageUrl: event.target.value })} placeholder="https://..." /></label>
+                  {productForm.imageUrl && <img src={productForm.imageUrl} alt="Pré-visualização do produto" className="mt-3 h-36 w-full rounded-xl object-cover" onError={(event) => { event.currentTarget.style.display = "none"; }} />}
+                  <div className="mt-5 flex gap-3"><button disabled={productBusy} className="flex-1 rounded-full bg-[#df2b24] px-4 py-3 text-sm font-black disabled:opacity-50" onClick={() => void saveProduct()}>{productBusy ? "A guardar..." : editingProduct ? "Guardar alterações" : "Adicionar produto"}</button>{editingProduct && <button className="rounded-full border border-white/20 px-4 py-3 text-sm font-black" onClick={resetProductForm}>Cancelar</button>}</div>
+                </section>
+                <section className="min-w-0 rounded-[24px] border border-[#e2d8cb] bg-white p-5 sm:p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-xl font-black">Catálogo de produtos</h2><p className="mt-1 text-sm text-[#796b60]">{products.length} produto(s) registado(s)</p></div><button className="rounded-full border border-[#dcd0c1] px-4 py-2 text-sm font-black" onClick={() => void load()}>Atualizar</button></div>
+                  <div className="mt-5 space-y-3">{products.map((product) => <article key={product.id} className="flex flex-col gap-4 rounded-2xl border border-[#eadfce] p-3 sm:flex-row sm:items-center">
+                    {product.imageUrl ? <img src={product.imageUrl} alt={product.name} className="h-24 w-full rounded-xl object-cover sm:w-24" /> : <div className="grid h-24 w-full place-items-center rounded-xl bg-[#f7f3ec] text-xs font-bold text-[#95877c] sm:w-24">Sem fotografia</div>}
+                    <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong>{product.name}</strong><span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${product.active ? "bg-[#edf8ed] text-[#286b2d]" : "bg-[#f2e9db] text-[#796b60]"}`}>{product.active ? "Disponível" : "Oculto"}</span></div><div className="mt-1 text-xs font-bold text-[#95877c]">{product.category || "Geral"}</div><p className="mt-1 line-clamp-2 text-sm text-[#796b60]">{product.description || "Sem descrição."}</p><div className="mt-2 font-black text-[#df2b24]">{Number(product.price).toLocaleString("pt-PT")} MT</div></div>
+                    <div className="flex flex-wrap gap-2 sm:flex-col"><button className="rounded-full border border-[#e5d7c5] px-3 py-2 text-xs font-black" onClick={() => { setEditingProduct(product.id); setProductForm({ name: product.name, description: product.description || "", category: product.category || "Geral", imageUrl: product.imageUrl || "", price: String(product.price) }); }}>Editar</button><button className="rounded-full border border-[#e5d7c5] px-3 py-2 text-xs font-black" onClick={() => void toggleProduct(product)}>{product.active ? "Ocultar" : "Publicar"}</button><button className="rounded-full bg-[#fff0ee] px-3 py-2 text-xs font-black text-[#b6201a]" onClick={() => void deleteProduct(product)}>Eliminar</button></div>
+                  </article>)}
+                  {!products.length && <div className="py-14 text-center text-[#796b60]">Ainda não há produtos. Utilize o formulário para adicionar o primeiro.</div>}</div>
+                </section>
+              </div>
             )}
             {tab === "marketing" && (
               <div className="mt-8 grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
