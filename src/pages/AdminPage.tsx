@@ -15,7 +15,7 @@ const tabs: Array<[Tab, string]> = [
   ["overview", "Visão geral"],
   ["orders", "Pedidos"],
   ["deliveries", "Entregas"],
-  ["products", "Produtos"],
+  ["products", "Produtos e catálogo"],
   ["marketing", "Marketing"],
   ["users", "Utilizadores"],
 ];
