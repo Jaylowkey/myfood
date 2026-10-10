@@ -242,6 +242,93 @@ app.get(`${route}/orders`, async (c) => {
   }
 });
 
+
+app.get(`${route}/products`, async (c) => {
+  try {
+    const products = (await kv.getByPrefix("product:"))
+      .filter((item: any) => item.active !== false)
+      .sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)));
+    return c.json({ products });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.get(`${route}/admin/products`, async (c) => {
+  try {
+    const profile = await actor(c);
+    requireAdmin(profile);
+    const products = (await kv.getByPrefix("product:"))
+      .sort((a: any, b: any) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt)));
+    return c.json({ products });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.post(`${route}/admin/products`, async (c) => {
+  try {
+    const profile = await actor(c);
+    requireAdmin(profile);
+    const body = await c.req.json();
+    const name = String(body.name || "").trim().slice(0, 120);
+    const description = String(body.description || "").trim().slice(0, 1000);
+    const category = String(body.category || "Geral").trim().slice(0, 80);
+    const imageUrl = String(body.imageUrl || "").trim().slice(0, 1000);
+    const price = Number(body.price);
+    if (!name || !Number.isFinite(price) || price <= 0) {
+      return c.json({ error: "Indique o nome e um preço válido maior que zero." }, 400);
+    }
+    if (imageUrl && !/^https:\/\//i.test(imageUrl)) {
+      return c.json({ error: "A imagem deve usar um endereço HTTPS válido." }, 400);
+    }
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const product = { id, name, description, category, imageUrl, price, active: body.active !== false, createdAt: now, updatedAt: now, createdBy: profile.id };
+    await kv.set(`product:${id}`, product);
+    return c.json({ product }, 201);
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.put(`${route}/admin/products/:id`, async (c) => {
+  try {
+    const profile = await actor(c);
+    requireAdmin(profile);
+    const id = c.req.param("id");
+    const existing = await kv.get(`product:${id}`);
+    if (!existing) return c.json({ error: "Produto não encontrado." }, 404);
+    const body = await c.req.json();
+    const name = String(body.name ?? existing.name).trim().slice(0, 120);
+    const description = String(body.description ?? existing.description ?? "").trim().slice(0, 1000);
+    const category = String(body.category ?? existing.category ?? "Geral").trim().slice(0, 80);
+    const imageUrl = String(body.imageUrl ?? existing.imageUrl ?? "").trim().slice(0, 1000);
+    const price = Number(body.price ?? existing.price);
+    if (!name || !Number.isFinite(price) || price <= 0) return c.json({ error: "Indique o nome e um preço válido maior que zero." }, 400);
+    if (imageUrl && !/^https:\/\//i.test(imageUrl)) return c.json({ error: "A imagem deve usar um endereço HTTPS válido." }, 400);
+    const product = { ...existing, name, description, category, imageUrl, price, active: body.active === undefined ? existing.active !== false : Boolean(body.active), updatedAt: new Date().toISOString() };
+    await kv.set(`product:${id}`, product);
+    return c.json({ product });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
+app.delete(`${route}/admin/products/:id`, async (c) => {
+  try {
+    const profile = await actor(c);
+    requireAdmin(profile);
+    const id = c.req.param("id");
+    const existing = await kv.get(`product:${id}`);
+    if (!existing) return c.json({ error: "Produto não encontrado." }, 404);
+    await kv.del(`product:${id}`);
+    return c.json({ success: true, id });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
 app.get(`${route}/admin/dashboard`, async (c) => {
   try {
     const profile = await actor(c);
