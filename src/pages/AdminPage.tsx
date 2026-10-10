@@ -4,15 +4,16 @@ import AppLogo from "../components/AppLogo";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../lib/api";
 
-type Tab = "overview" | "orders" | "marketing" | "users";
+type Tab = "overview" | "orders" | "deliveries" | "marketing" | "users";
 type Metrics = { orders: number; customers: number; campaigns: number; revenue: number; pending: number };
-type Order = { id: string; customerName: string; customerEmail: string; total: number; status: string; createdAt: string };
+type Order = { id: string; userId?: string; customerName: string; customerEmail: string; customerPhone?: string; address?: string; delivery?: number; total: number; status: string; driverId?: string; driverName?: string; createdAt: string };
 type User = { id: string; name: string; email: string; role: string; marketingOptIn: boolean };
 type Campaign = { id: string; title: string; message: string; status: string; audience: string; createdAt: string };
 
 const tabs: Array<[Tab, string]> = [
   ["overview", "Visão geral"],
   ["orders", "Pedidos"],
+  ["deliveries", "Entregas"],
   ["marketing", "Marketing"],
   ["users", "Utilizadores"],
 ];
@@ -32,6 +33,7 @@ export default function AdminPage() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [deliveryBusy, setDeliveryBusy] = useState<string>("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,6 +78,19 @@ export default function AdminPage() {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Não foi possível guardar a campanha.");
+    }
+  }
+
+  async function assignDriver(orderId: string, driverId: string) {
+    setError("");
+    setDeliveryBusy(orderId);
+    try {
+      const result = await api<{ order: Order }>(`/admin/orders/${orderId}/driver`, { method: "PUT", body: JSON.stringify({ driverId }) });
+      setOrders((current) => current.map((order) => order.id === orderId ? result.order : order));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Não foi possível atribuir o entregador.");
+    } finally {
+      setDeliveryBusy("");
     }
   }
 
@@ -139,6 +154,31 @@ export default function AdminPage() {
               </div>
             )}
             {tab === "orders" && <section className="mt-8 rounded-[24px] border border-[#e2d8cb] bg-white p-6"><OrderTable onUpdate={updateOrder} orders={orders} /></section>}
+            {tab === "deliveries" && (
+              <section className="mt-8 rounded-[24px] border border-[#e2d8cb] bg-white p-6">
+                <h2 className="font-display text-xl font-black">Gestão de entregas</h2>
+                <p className="mt-1 text-sm text-[#796b60]">Atribua pedidos a entregadores registados e acompanhe o estado da entrega.</p>
+                <div className="mt-5 space-y-3">
+                  {orders.filter((order) => !["completed", "cancelled"].includes(order.status)).map((order) => (
+                    <article key={order.id} className="rounded-2xl border border-[#eadfce] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-black">Pedido #{order.id.slice(0, 8).toUpperCase()} · {order.customerName || "Cliente"}</div>
+                          <div className="mt-1 text-sm text-[#796b60]">{order.address || "Sem endereço registado"} · {order.total} MT</div>
+                          <div className="mt-1 text-xs font-bold text-[#df2b24]">Estado: {statusLabels[order.status] || order.status} · Entregador: {order.driverName || "Por atribuir"}</div>
+                        </div>
+                        <select disabled={deliveryBusy === order.id} className="min-w-48 rounded-xl border border-[#e5d7c5] bg-white px-3 py-2 text-sm font-bold" value={order.driverId || ""} onChange={(event) => { if (event.target.value) void assignDriver(order.id, event.target.value); }}>
+                          <option value="">Atribuir entregador…</option>
+                          {users.filter((user) => user.role === "driver").map((driver) => <option key={driver.id} value={driver.id}>{driver.name} · {driver.email}</option>)}
+                        </select>
+                      </div>
+                    </article>
+                  ))}
+                  {!orders.some((order) => !["completed", "cancelled"].includes(order.status)) && <div className="py-12 text-center text-[#796b60]">Não existem entregas pendentes.</div>}
+                  {!users.some((user) => user.role === "driver") && <div className="rounded-xl bg-[#fff0ee] p-3 text-sm text-[#b6201a]">Ainda não existem utilizadores com a função Entregador. Na secção Utilizadores, atribua essa função a uma conta.</div>}
+                </div>
+              </section>
+            )}
             {tab === "marketing" && (
               <div className="mt-8 grid gap-6 xl:grid-cols-[.9fr_1.1fr]">
                 <section className="rounded-[24px] bg-[#241712] p-6 text-white">
