@@ -15,7 +15,6 @@ type Product = {
   tag?: string;
 };
 
-const categories=["Todos"];
 
 export default function Storefront() {
   const navigate=useNavigate();
