@@ -328,6 +328,58 @@ app.put(`${route}/admin/orders/:id`, async (c) => {
   }
 });
 
+app.put(`${route}/admin/orders/:id/driver`, async (c) => {
+  try {
+    const admin = await actor(c);
+    requireAdmin(admin);
+    const id = c.req.param("id");
+    const order = await kv.get(`order:${id}`);
+    if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
+    const body = await c.req.json();
+    const driverId = String(body.driverId || "").trim();
+    if (!driverId) return c.json({ error: "Selecione um entregador." }, 400);
+    const driver = await kv.get(`profile:${driverId}`);
+    if (!driver || driver.role !== "driver") {
+      return c.json({ error: "O utilizador seleccionado não é um entregador." }, 400);
+    }
+    if (["completed", "cancelled"].includes(order.status)) {
+      return c.json({ error: "Não é possível atribuir um pedido concluído ou cancelado." }, 400);
+    }
+    const now = new Date().toISOString();
+    const updated = {
+      ...order,
+      driverId,
+      driverName: driver.name,
+      driverPhone: driver.phone || "",
+      deliveryStage: order.deliveryStage || "accepted",
+      status: order.status === "ready" ? "delivery" : order.status,
+      assignedAt: now,
+      updatedAt: now,
+    };
+    await kv.set(`order:${id}`, updated);
+    const notificationId = crypto.randomUUID();
+    await kv.set(`notification:${order.userId}:${notificationId}`, {
+      id: notificationId,
+      title: "Entregador atribuído",
+      message: `${driver.name} foi atribuído ao seu pedido.`,
+      type: "delivery",
+      read: false,
+      createdAt: now,
+    });
+    await kv.set(`notification:${driverId}:${notificationId}`, {
+      id: notificationId,
+      title: "Nova entrega atribuída",
+      message: `Foi-lhe atribuído o pedido #${id.slice(0, 8).toUpperCase()}.`,
+      type: "delivery",
+      read: false,
+      createdAt: now,
+    });
+    return c.json({ order: updated });
+  } catch (error) {
+    return failure(c, error);
+  }
+});
+
 app.get(`${route}/admin/users`, async (c) => {
   try {
     const profile = await actor(c);
@@ -436,13 +488,22 @@ app.post(`${route}/admin/campaigns`, async (c) => {
     };
     await kv.set(`campaign:${id}`, campaign);
 
+    let recipientCount = 0;
     if (body.sendNow) {
-      const users = await kv.getByPrefix("profile:");
-      const recipients = users.filter(
-        (user) => campaign.audience === "all" || user.marketingOptIn !== false,
-      );
-      await Promise.all(
-        recipients.map((user) =>
+      // Use Auth as the source of truth, and stored profiles for marketing preferences.
+      const [authUsers, storedProfiles] = await Promise.all([
+        allAuthUsers(),
+        kv.getByPrefix("profile:"),
+      ]);
+      const profilesById = new Map(storedProfiles.map((item: any) => [item.id, item]));
+      const recipients = authUsers.filter((user: any) => {
+        const email = String(user.email || "").toLowerCase();
+        if (!email || superAdminEmails.has(email)) return false;
+        const stored: any = profilesById.get(user.id);
+        return campaign.audience === "all" || stored?.marketingOptIn !== false;
+      });
+      const results = await Promise.allSettled(
+        recipients.map((user: any) =>
           kv.set(`notification:${user.id}:${id}`, {
             id,
             title,
@@ -453,8 +514,13 @@ app.post(`${route}/admin/campaigns`, async (c) => {
           }),
         ),
       );
+      recipientCount = results.filter((result) => result.status === "fulfilled").length;
+      if (recipientCount === 0 && recipients.length > 0) {
+        throw new Error("Não foi possível criar notificações para os destinatários.");
+      }
+      await kv.set(`campaign:${id}`, { ...campaign, recipientCount, status: "sent" });
     }
-    return c.json({ campaign }, 201);
+    return c.json({ campaign: { ...campaign, recipientCount } }, 201);
   } catch (error) {
     return failure(c, error);
   }
