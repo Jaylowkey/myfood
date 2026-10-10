@@ -193,6 +193,23 @@ app.post(`${route}/orders`, async (c) => {
     if (!Array.isArray(body.items) || !body.items.length) {
       return c.json({ error: "O pedido está vazio." }, 400);
     }
+    const submittedItems = body.items as Array<{ id: string; quantity: number }>;
+    const trustedItems = [];
+    for (const item of submittedItems) {
+      const productId = String(item.id || "");
+      const quantity = Math.floor(Number(item.quantity));
+      if (!productId || !Number.isFinite(quantity) || quantity < 1 || quantity > 50) {
+        return c.json({ error: "Um dos produtos ou quantidades do pedido é inválido." }, 400);
+      }
+      const product = await kv.get(`product:${productId}`);
+      if (!product || product.active === false) {
+        return c.json({ error: "Um dos produtos já não está disponível. Atualize o menu." }, 400);
+      }
+      trustedItems.push({ id: product.id, name: product.name, price: Number(product.price), quantity });
+    }
+    const subtotal = trustedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    const delivery = subtotal >= 1000 || subtotal === 0 ? 0 : 80;
+    const total = subtotal + delivery;
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const order = {
@@ -201,10 +218,10 @@ app.post(`${route}/orders`, async (c) => {
       customerName: profile.name,
       customerEmail: profile.email,
       customerPhone: profile.phone || "",
-      items: body.items,
-      subtotal: Number(body.subtotal) || 0,
-      delivery: Number(body.delivery) || 0,
-      total: Number(body.total) || 0,
+      items: trustedItems,
+      subtotal,
+      delivery,
+      total,
       address: String(body.address || "").trim().slice(0, 240),
       notes: String(body.notes || "").trim().slice(0, 300),
       status: "received",
