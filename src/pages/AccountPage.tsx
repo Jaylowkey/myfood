@@ -12,6 +12,13 @@ type Order = {
   driverName?: string;
   createdAt: string;
   updatedAt?: string;
+  etaMinutes?: number | null;
+  etaDueAt?: string | null;
+  preparationStartedAt?: string | null;
+  preparationMinutes?: number;
+  assignmentStatus?: string;
+  assignmentExpiresAt?: string | null;
+  referenceRequest?: string;
   items: Array<{ name: string; quantity: number }>;
 };
 
