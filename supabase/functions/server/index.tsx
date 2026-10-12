@@ -648,6 +648,11 @@ async function expireDriverAssignments() {
   const nowMs = Date.now();
   const orders = await kv.getByPrefix("order:");
   for (const order of orders as any[]) {
+    if (order.etaDueAt && Date.parse(order.etaDueAt) <= nowMs && !["completed", "cancelled"].includes(order.status) && !order.isLate) {
+      const lateOrder = { ...order, isLate: true, lateDetectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      await kv.set(`order:${order.id}`, lateOrder);
+      if (order.driverId) await kv.set(`driver-reputation-event:${order.driverId}:${crypto.randomUUID()}`, { driverId: order.driverId, orderId: order.id, type: "late_delivery", penalty: 0.25, at: new Date().toISOString(), reason: "Estimativa ultrapassada" });
+    }
     if (order.assignmentStatus === "pending" && order.assignmentExpiresAt && Date.parse(order.assignmentExpiresAt) <= nowMs) {
       const now = new Date().toISOString();
       const expired = {
@@ -672,6 +677,15 @@ async function expireDriverAssignments() {
     }
   }
 }
+
+app.post(`${route}/internal/expire-assignments`, async (c) => {
+  const secret = Deno.env.get("ASSIGNMENT_CRON_SECRET");
+  if (!secret || c.req.header("x-cron-secret") !== secret) return c.json({ error: "Acesso não autorizado." }, 401);
+  try {
+    await expireDriverAssignments();
+    return c.json({ success: true, checkedAt: new Date().toISOString() });
+  } catch (error) { return failure(c, error); }
+});
 
 app.get(`${route}/driver/orders`, async (c) => {
   try {
