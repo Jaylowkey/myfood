@@ -9,7 +9,7 @@ type Stage = "accepted" | "picked_up" | "arriving" | "delivered" | null;
 type DeliveryOrder = {
   id: string; customerName: string; customerPhone?: string; address: string; notes?: string;
   total: number; delivery: number; status: string; deliveryStage: Stage; driverName?: string;
-  createdAt: string; items: Array<{ id?: string | number; name: string; quantity: number; price?: number }>;
+  createdAt: string; assignmentStatus?: string; assignmentExpiresAt?: string | null; etaMinutes?: number | null; etaDueAt?: string | null; preparationStartedAt?: string | null; preparationMinutes?: number; referenceRequest?: string; items: Array<{ id?: string | number; name: string; quantity: number; price?: number }>;
 };
 const labels: Record<Tab, string> = { available: "Disponíveis", active: "Em curso", completed: "Concluídas" };
 const stageInfo: Record<string, { label: string; action: string; next: string }> = {
@@ -27,6 +27,10 @@ export default function DriverPage() {
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState("");
   const [error, setError] = useState("");
+  const [clock, setClock] = useState(Date.now());
+  const [etaValues, setEtaValues] = useState<Record<string, string>>({});
+  const [referenceValues, setReferenceValues] = useState<Record<string, string>>({});
+  const [reasonValues, setReasonValues] = useState<Record<string, string>>({});
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -40,8 +44,9 @@ export default function DriverPage() {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 15000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => void load(true), 10000);
+    const clockTimer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => { window.clearInterval(timer); window.clearInterval(clockTimer); };
   }, [load]);
 
   const orders = useMemo(() => tab === "available" ? available : tab === "active" ? assigned : completed, [tab, available, assigned, completed]);
@@ -50,7 +55,19 @@ export default function DriverPage() {
   async function claim(id: string) {
     setWorkingId(id); setError("");
     try { await api(`/driver/orders/${id}/claim`, { method: "POST" }); await load(true); setTab("active"); }
-    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível aceitar a entrega."); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível iniciar a aceitação."); }
+    finally { setWorkingId(""); }
+  }
+  async function decide(id: string, decision: "accept" | "reject" | "reference") {
+    setWorkingId(id); setError("");
+    try { await api(`/driver/orders/${id}/decision`, { method: "POST", body: JSON.stringify({ decision, reason: reasonValues[id] || "", reference: referenceValues[id] || "" }) }); await load(true); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível registar a decisão."); }
+    finally { setWorkingId(""); }
+  }
+  async function saveEta(id: string) {
+    setWorkingId(id); setError("");
+    try { await api(`/driver/orders/${id}/eta`, { method: "PUT", body: JSON.stringify({ minutes: Number(etaValues[id] || 30) }) }); await load(true); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível guardar a estimativa."); }
     finally { setWorkingId(""); }
   }
   async function advance(id: string, stage: string) {
@@ -90,8 +107,22 @@ export default function DriverPage() {
             {order.customerPhone && <div className="mt-3 text-sm"><span className="text-[#95877c]">Contacto: </span><a className="font-bold text-[#df2b24]" href={`tel:${order.customerPhone}`}>{order.customerPhone}</a></div>}
             <div className="mt-4 rounded-2xl bg-[#fffaf1] p-4"><div className="text-xs font-black uppercase tracking-wider text-[#95877c]">Itens</div><div className="mt-2 text-sm font-bold">{(order.items || []).map(item => `${item.quantity}× ${item.name}`).join(" · ")}</div>{order.notes && <p className="mt-3 border-t border-dashed border-[#dfd2c1] pt-3 text-xs text-[#796b60]">Observações: {order.notes}</p>}</div>
             <div className="mt-4 flex items-center justify-between"><div><div className="text-xs text-[#95877c]">Total do pedido</div><div className="font-display text-xl font-black">{Number(order.total || 0).toLocaleString("pt-PT")} MT</div></div><div className="text-right"><div className="text-xs text-[#95877c]">Taxa de entrega</div><div className="font-black text-[#df2b24]">{Number(order.delivery || 0)} MT</div></div></div>
-            {tab === "available" && <button disabled={workingId === order.id} onClick={() => void claim(order.id)} className="mt-5 w-full rounded-full bg-[#df2b24] px-5 py-4 text-sm font-black text-white disabled:opacity-60">{workingId === order.id ? "A aceitar..." : "Aceitar entrega"}</button>}
-            {tab === "active" && stage && <button disabled={workingId === order.id} onClick={() => void advance(order.id, stage.next)} className="mt-5 w-full rounded-full bg-[#241712] px-5 py-4 text-sm font-black text-white disabled:opacity-60">{workingId === order.id ? "A actualizar..." : stage.action}</button>}
+            {tab === "available" && <button disabled={workingId === order.id} onClick={() => void claim(order.id)} className="mt-5 w-full rounded-full bg-[#df2b24] px-5 py-4 text-sm font-black text-white disabled:opacity-60">{workingId === order.id ? "A solicitar..." : "Receber atribuição · 5 min"}</button>}
+            {tab === "active" && order.assignmentStatus === "pending" && <div className="mt-5 space-y-3 rounded-2xl border border-[#f2d78c] bg-[#fff8df] p-4">
+              <div className="flex items-center justify-between gap-3"><span className="font-black">Decida sobre esta entrega</span><span className="rounded-full bg-[#241712] px-3 py-1.5 font-mono text-sm font-black text-white">{Math.floor(Math.max(0, Date.parse(order.assignmentExpiresAt || "") - clock) / 60000).toString().padStart(2,"0")}:{Math.floor(Math.max(0, Date.parse(order.assignmentExpiresAt || "") - clock) / 1000 % 60).toString().padStart(2,"0")}</span></div>
+              <p className="text-xs text-[#796b60]">O prazo é validado pelo servidor. Se expirar, a entrega volta a ficar disponível.</p>
+              <button disabled={workingId === order.id || !order.assignmentExpiresAt || Date.parse(order.assignmentExpiresAt) <= clock} onClick={() => void decide(order.id,"accept")} className="w-full rounded-full bg-[#df2b24] px-4 py-3.5 text-sm font-black text-white disabled:opacity-50">Aceitar entrega</button>
+              <div className="grid gap-2 sm:grid-cols-2"><input value={reasonValues[order.id] || ""} onChange={e => setReasonValues(v => ({...v,[order.id]:e.target.value}))} placeholder="Motivo da rejeição (opcional)" className="min-w-0 rounded-xl border border-[#e3d8ca] bg-white px-3 py-3 text-sm"/><button disabled={workingId === order.id} onClick={() => void decide(order.id,"reject")} className="rounded-xl border border-[#e3d8ca] bg-white px-3 py-3 text-sm font-black">Rejeitar</button></div>
+              <input value={referenceValues[order.id] || ""} onChange={e => setReferenceValues(v => ({...v,[order.id]:e.target.value}))} placeholder="Ponto de referência que precisa" className="w-full rounded-xl border border-[#e3d8ca] bg-white px-3 py-3 text-sm"/>
+              <button disabled={workingId === order.id} onClick={() => void decide(order.id,"reference")} className="w-full rounded-xl border border-[#e3d8ca] bg-white px-4 py-3 text-sm font-black">Pedir referência ao cliente</button>
+            </div>}
+            {tab === "active" && order.assignmentStatus === "accepted" && !order.etaMinutes && <div className="mt-5 space-y-3 rounded-2xl bg-[#fffaf1] p-4">
+              <label className="block text-sm font-black">Estimativa até ao cliente</label>
+              <select value={etaValues[order.id] || "30"} onChange={e => setEtaValues(v => ({...v,[order.id]:e.target.value}))} className="w-full rounded-xl border border-[#e3d8ca] bg-white px-4 py-3"><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option></select>
+              <button disabled={workingId === order.id} onClick={() => void saveEta(order.id)} className="w-full rounded-full bg-[#df2b24] px-4 py-3.5 text-sm font-black text-white">Guardar estimativa</button>
+            </div>}
+            {tab === "active" && order.etaMinutes && <div className="mt-4 rounded-2xl bg-[#edf8ed] p-4 text-sm"><strong>ETA enviado ao cliente: {order.etaMinutes} minutos</strong>{order.etaDueAt && <p className="mt-1 text-xs text-[#286b2d]">Prazo previsto: {new Date(order.etaDueAt).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit"})}</p>}</div>}
+            {tab === "active" && stage && order.assignmentStatus !== "pending" && <button disabled={workingId === order.id || (order.assignmentStatus === "accepted" && !order.etaMinutes)} onClick={() => void advance(order.id, stage.next)} className="mt-5 w-full rounded-full bg-[#241712] px-5 py-4 text-sm font-black text-white disabled:opacity-60">{workingId === order.id ? "A actualizar..." : stage.action}</button>}
           </div>
         </article>;
       })}</div> : <div className="mt-5 rounded-[24px] border border-dashed border-[#d5c6b4] bg-white/60 px-5 py-20 text-center"><div className="font-black">Nenhuma entrega nesta lista</div><p className="mt-1 text-sm text-[#796b60]">{tab === "available" ? "Os pedidos aparecerão aqui quando estiverem prontos para recolha." : "As suas entregas aparecerão aqui."}</p></div>}
