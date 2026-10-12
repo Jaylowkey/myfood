@@ -401,7 +401,15 @@ app.put(`${route}/admin/orders/:id`, async (c) => {
     const body = await c.req.json();
     const statuses = ["received", "preparing", "ready", "delivery", "completed", "cancelled"];
     if (!statuses.includes(body.status)) return c.json({ error: "Estado inválido." }, 400);
-    const updated = { ...order, status: body.status, updatedAt: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const updated = {
+      ...order,
+      status: body.status,
+      preparationStartedAt: body.status === "preparing" && !order.preparationStartedAt ? now : order.preparationStartedAt,
+      preparationMinutes: Number(body.preparationMinutes || order.preparationMinutes || 30),
+      readyAt: body.status === "ready" ? now : order.readyAt,
+      updatedAt: now,
+    };
     await kv.set(`order:${id}`, updated);
     const notificationId = crypto.randomUUID();
     await kv.set(`notification:${order.userId}:${notificationId}`, {
@@ -455,8 +463,13 @@ app.put(`${route}/admin/orders/:id/driver`, async (c) => {
       driverId,
       driverName: driver.name,
       driverPhone: driver.phone || "",
-      deliveryStage: order.deliveryStage || "accepted",
-      status: order.status === "ready" ? "delivery" : order.status,
+      deliveryStage: null,
+      assignmentStatus: "pending",
+      assignmentExpiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      assignmentDecidedAt: null,
+      etaMinutes: null,
+      etaSetAt: null,
+      status: order.status,
       assignedAt: now,
       updatedAt: now,
     };
@@ -631,13 +644,41 @@ app.post(`${route}/admin/campaigns`, async (c) => {
 });
 
 
+async function expireDriverAssignments() {
+  const nowMs = Date.now();
+  const orders = await kv.getByPrefix("order:");
+  for (const order of orders as any[]) {
+    if (order.assignmentStatus === "pending" && order.assignmentExpiresAt && Date.parse(order.assignmentExpiresAt) <= nowMs) {
+      const now = new Date().toISOString();
+      const expired = {
+        ...order,
+        driverId: null, driverName: null, driverPhone: null,
+        assignmentStatus: "expired", assignmentExpiredAt: now,
+        assignmentExpiresAt: null, deliveryStage: null,
+        reputationEvents: [...(order.reputationEvents || []), { type: "assignment_expired", driverId: order.driverId, at: now, penalty: 1 }],
+        updatedAt: now,
+      };
+      await kv.set(`order:${order.id}`, expired);
+      const driverId = order.driverId;
+      const eventId = crypto.randomUUID();
+      await kv.set(`driver-reputation-event:${driverId}:${eventId}`, { id: eventId, driverId, orderId: order.id, type: "assignment_expired", penalty: 1, at: now, reason: "Prazo de aceitação expirado" });
+      const drivers = (await kv.getByPrefix("profile:")).filter((p: any) => p.role === "driver" && p.id !== driverId);
+      await Promise.all(drivers.map((driver: any) => kv.set(`notification:${driver.id}:${crypto.randomUUID()}`, {
+        id: crypto.randomUUID(), title: "Entrega disponível", message: `Pedido #${String(order.id).slice(0, 8).toUpperCase()} voltou a ficar disponível.`, type: "delivery", read: false, createdAt: now,
+      })));
+      await kv.set(`notification:${order.userId}:${crypto.randomUUID()}`, {
+        id: crypto.randomUUID(), title: "A procurar outro entregador", message: "O prazo de aceitação terminou. Estamos a procurar outro entregador.", type: "delivery", read: false, createdAt: now,
+      });
+    }
+  }
+}
+
 app.get(`${route}/driver/orders`, async (c) => {
   try {
     const profile = await actor(c);
     if (!["driver", "admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
-    const orders = (await kv.getByPrefix("order:")).sort((a: any, b: any) =>
-      String(b.createdAt).localeCompare(String(a.createdAt)),
-    );
+    await expireDriverAssignments();
+    const orders = (await kv.getByPrefix("order:")).sort((a: any, b: any) => String(b.createdAt).localeCompare(String(a.createdAt)));
     return c.json({
       available: orders.filter((item: any) => item.status === "ready" && !item.driverId),
       assigned: orders.filter((item: any) =>
@@ -645,13 +686,9 @@ app.get(`${route}/driver/orders`, async (c) => {
           ? item.driverId && !["completed", "cancelled"].includes(item.status)
           : item.driverId === profile.id && !["completed", "cancelled"].includes(item.status),
       ),
-      completed: orders.filter((item: any) =>
-        item.status === "completed" && (["admin", "super_admin"].includes(profile.role) || item.driverId === profile.id),
-      ).slice(0, 30),
+      completed: orders.filter((item: any) => item.status === "completed" && (["admin", "super_admin"].includes(profile.role) || item.driverId === profile.id)).slice(0, 30),
     });
-  } catch (error) {
-    return failure(c, error);
-  }
+  } catch (error) { return failure(c, error); }
 });
 
 app.post(`${route}/driver/orders/:id/claim`, async (c) => {
@@ -661,20 +698,73 @@ app.post(`${route}/driver/orders/:id/claim`, async (c) => {
     const id = c.req.param("id");
     const order = await kv.get(`order:${id}`);
     if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
-    if (order.driverId && order.driverId !== profile.id) return c.json({ error: "Entrega já aceite." }, 409);
+    if (order.driverId && order.driverId !== profile.id) return c.json({ error: "Entrega já atribuída." }, 409);
     if (order.status !== "ready") return c.json({ error: "Pedido ainda não está pronto." }, 400);
     const now = new Date().toISOString();
-    const updated = { ...order, driverId: profile.id, driverName: profile.name, driverPhone: profile.phone || "", deliveryStage: "accepted", assignedAt: now, updatedAt: now };
+    const updated = { ...order, driverId: profile.id, driverName: profile.name, driverPhone: profile.phone || "", deliveryStage: null, assignmentStatus: "pending", assignmentExpiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), assignedAt: now, updatedAt: now };
     await kv.set(`order:${id}`, updated);
-    const notificationId = crypto.randomUUID();
-    await kv.set(`notification:${order.userId}:${notificationId}`, {
-      id: notificationId, title: "Entregador confirmado", message: `${profile.name} aceitou a sua entrega.`,
-      type: "delivery", read: false, createdAt: now,
-    });
+    await kv.set(`notification:${profile.id}:${crypto.randomUUID()}`, { id: crypto.randomUUID(), title: "Confirme a entrega em 5 minutos", message: `Pedido #${id.slice(0,8).toUpperCase()}: aceite, rejeite ou peça uma referência antes do prazo.`, type: "delivery", read: false, createdAt: now });
     return c.json({ order: updated });
-  } catch (error) {
-    return failure(c, error);
-  }
+  } catch (error) { return failure(c, error); }
+});
+
+app.post(`${route}/driver/orders/:id/decision`, async (c) => {
+  try {
+    const profile = await actor(c);
+    if (!["driver", "admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
+    const id = c.req.param("id");
+    const order = await kv.get(`order:${id}`);
+    if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
+    if (order.driverId !== profile.id && !["admin", "super_admin"].includes(profile.role)) throw new Error("FORBIDDEN");
+    if (order.assignmentStatus !== "pending" || !order.assignmentExpiresAt || Date.parse(order.assignmentExpiresAt) <= Date.now()) {
+      await expireDriverAssignments();
+      return c.json({ error: "O prazo de aceitação terminou ou a atribuição já foi decidida." }, 409);
+    }
+    const body = await c.req.json();
+    const decision = String(body.decision || "");
+    const now = new Date().toISOString();
+    if (decision === "reference") {
+      const referenceRequest = String(body.reference || "").trim().slice(0, 240);
+      const updated = { ...order, referenceRequest: referenceRequest || "Solicita um ponto de referência adicional", referenceRequestedAt: now, updatedAt: now };
+      await kv.set(`order:${id}`, updated);
+      await kv.set(`notification:${order.userId}:${crypto.randomUUID()}`, { id: crypto.randomUUID(), title: "Entregador pediu uma referência", message: updated.referenceRequest, type: "delivery", read: false, createdAt: now });
+      return c.json({ order: updated });
+    }
+    if (decision === "reject") {
+      const reason = String(body.reason || "").trim().slice(0, 300);
+      await kv.set(`driver-reputation-event:${profile.id}:${crypto.randomUUID()}`, { driverId: profile.id, orderId: id, type: "explicit_rejection", penalty: 0.5, reason, at: now });
+      const updated = { ...order, driverId: null, driverName: null, driverPhone: null, assignmentStatus: "rejected", assignmentRejectedAt: now, assignmentExpiresAt: null, rejectionReason: reason, deliveryStage: null, updatedAt: now };
+      await kv.set(`order:${id}`, updated);
+      await kv.set(`notification:${order.userId}:${crypto.randomUUID()}`, { id: crypto.randomUUID(), title: "A procurar outro entregador", message: "O entregador não pôde aceitar a entrega. Estamos a procurar outro entregador.", type: "delivery", read: false, createdAt: now });
+      return c.json({ order: updated });
+    }
+    if (decision === "accept") {
+      const updated = { ...order, assignmentStatus: "accepted", assignmentDecidedAt: now, assignmentExpiresAt: null, deliveryStage: "accepted", status: "delivery", updatedAt: now };
+      await kv.set(`order:${id}`, updated);
+      await kv.set(`notification:${order.userId}:${crypto.randomUUID()}`, { id: crypto.randomUUID(), title: "Entregador confirmou", message: `${profile.name} aceitou a entrega. A estimativa será actualizada em breve.`, type: "delivery", read: false, createdAt: now });
+      return c.json({ order: updated });
+    }
+    return c.json({ error: "Decisão inválida." }, 400);
+  } catch (error) { return failure(c, error); }
+});
+
+app.put(`${route}/driver/orders/:id/eta`, async (c) => {
+  try {
+    const profile = await actor(c);
+    const id = c.req.param("id");
+    const order = await kv.get(`order:${id}`);
+    if (!order) return c.json({ error: "Pedido não encontrado." }, 404);
+    if (profile.role === "driver" && order.driverId !== profile.id) throw new Error("FORBIDDEN");
+    if (order.assignmentStatus !== "accepted") return c.json({ error: "Aceite a atribuição antes de definir a estimativa." }, 400);
+    const body = await c.req.json();
+    const minutes = Number(body.minutes);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 180) return c.json({ error: "A estimativa deve estar entre 5 e 180 minutos." }, 400);
+    const now = new Date().toISOString();
+    const updated = { ...order, etaMinutes: minutes, etaSetAt: now, etaDueAt: new Date(Date.now() + minutes * 60000).toISOString(), updatedAt: now };
+    await kv.set(`order:${id}`, updated);
+    await kv.set(`notification:${order.userId}:${crypto.randomUUID()}`, { id: crypto.randomUUID(), title: "Estimativa de entrega actualizada", message: `O entregador estima chegar em cerca de ${minutes} minutos.`, type: "delivery", read: false, createdAt: now });
+    return c.json({ order: updated });
+  } catch (error) { return failure(c, error); }
 });
 
 app.put(`${route}/driver/orders/:id/stage`, async (c) => {
