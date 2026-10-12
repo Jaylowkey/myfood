@@ -42,10 +42,16 @@ export default function AccountPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [message, setMessage] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [clock, setClock] = useState(Date.now());
 
   useEffect(() => {
     setForm(profile);
   }, [profile]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let alive = true;
