@@ -177,7 +177,20 @@ export default function AccountPage() {
                     ) : (
                       <div className="rounded-2xl bg-[#fff0ee] p-4 font-bold text-[#b6201a]">Não é necessário fazer mais nada. Se o cancelamento parecer incorrecto, contacte o restaurante.</div>
                     )}
-                    {order.driverName && <div className="mb-4 rounded-2xl bg-[#fffaf1] p-4 text-sm"><span className="text-[#796b60]">Entregador atribuído: </span><strong>{order.driverName}</strong></div>}
+                    {order.preparationStartedAt && order.status === "preparing" && <div className="mb-4 rounded-2xl border border-[#eadfce] bg-[#fffaf1] p-4">
+                      <div className="text-xs font-black uppercase tracking-wider text-[#95877c]">Tempo de preparação da cozinha</div>
+                      <div className="mt-1 text-xl font-black">{Math.floor(Math.max(0, clock - Date.parse(order.preparationStartedAt)) / 60000)} min decorridos</div>
+                      <p className="mt-1 text-sm text-[#796b60]">Estimativa restante: {Math.max(0, Number(order.preparationMinutes || 30) - Math.floor(Math.max(0, clock - Date.parse(order.preparationStartedAt)) / 60000))} min</p>
+                    </div>}
+                    {order.driverName && <div className="mb-4 rounded-2xl bg-[#fffaf1] p-4 text-sm"><span className="text-[#796b60]">Entregador atribuído: </span><strong>{order.driverName}</strong>
+                      {order.assignmentStatus === "pending" && order.assignmentExpiresAt && <p className="mt-2 font-bold text-[#df2b24]">A aguardar confirmação · {Math.floor(Math.max(0, Date.parse(order.assignmentExpiresAt) - clock) / 60000)}:{Math.floor(Math.max(0, Date.parse(order.assignmentExpiresAt) - clock) / 1000 % 60).toString().padStart(2,"0")}</p>}
+                      {order.referenceRequest && <p className="mt-2">Pedido de referência: {order.referenceRequest}</p>}
+                    </div>}
+                    {order.etaMinutes && order.etaDueAt && !["completed","cancelled"].includes(order.status) && <div className={clock > Date.parse(order.etaDueAt) ? "mb-4 rounded-2xl bg-[#fff0ee] p-4 text-[#b6201a]" : "mb-4 rounded-2xl bg-[#edf8ed] p-4 text-[#286b2d]"}>
+                      <div className="text-xs font-black uppercase tracking-wider">Estimativa de entrega</div>
+                      <div className="mt-1 text-xl font-black">{clock > Date.parse(order.etaDueAt) ? "Entrega atrasada" : "Chegada prevista em " + Math.ceil((Date.parse(order.etaDueAt) - clock) / 60000) + " min"}</div>
+                      <p className="mt-1 text-sm">Estimativa inicial: {order.etaMinutes} minutos · previsão {new Date(order.etaDueAt).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit"})}</p>
+                    </div>}
                     <div className="border-t border-dashed border-[#eadfce] pt-4">
                       <div className="text-xs font-black uppercase tracking-wider text-[#95877c]">Resumo do pedido</div>
                       <div className="mt-3 space-y-2">{order.items.map((item, index) => <div className="flex justify-between gap-3 text-sm" key={index}><span>{item.quantity}× {item.name}</span></div>)}</div>
